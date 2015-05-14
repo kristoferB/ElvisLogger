@@ -1,4 +1,4 @@
-activator-akka-scala-seed
+Elvis logger
 =========================
 
-A minimal seed template for an Akka with Scala build 
+hej
