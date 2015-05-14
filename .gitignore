@@ -1,0 +1,24 @@
+target/
+bin/
+project/boot/
+project/target
+project/project
+.worksheet/
+.settings/
+*.project
+*.classpath
+*.cache
+.project
+.classpath
+.cache
+*.DS_Store
+
+
+# Intellij
+.idea/
+*.iml
+*.iws
+
+# journal
+journal/
+snapshots/
