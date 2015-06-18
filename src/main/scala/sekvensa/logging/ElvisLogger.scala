@@ -2,6 +2,8 @@ package sekvensa.logging
 
 import akka.actor._
 import akka.persistence._
+import lisa.endpoint.message._
+import lisa.endpoint.message.MessageLogic._
 
 /**
  * Created by kristofer on 18/02/15.
@@ -20,7 +22,11 @@ class ElvisLogger extends PersistentActor {
   import com.github.nscala_time.time.Imports._
   implicit val formats = org.json4s.DefaultFormats ++ org.json4s.ext.JodaTimeSerializers.all
 
+  //lisa.endpoint.esb.LISAEndPoint.initial(context.system)
+  val evah = context.actorOf(dummyProduceToEvah.props(List("events")))
+
   def receiveCommand = {
+    case "hej" => evah ! "hej"
     case s @ SnapShot(ps) => {
       if (currentState.isEmpty) {
         ps.foreach(p => println(s"${p.CareContactId}, ${p.Location}"))
@@ -61,12 +67,20 @@ class ElvisLogger extends PersistentActor {
   }
 
   val receiveRecover: Receive = {
-    case d: PatientDiff => println(s"RECOVER DIFF")
-    case np: NewPatient => println(s"RECOVER NEW")
-    case s: SnapShot => println(s"RECOVER SNAP")
-    case r: RemovedPatient => println(s"RECOVER removed")
+    case d: PatientDiff => sendToEvah(LISAMessage("diff"->d))
+    case np: NewPatient => sendToEvah(LISAMessage("new"->np))
+    case s: SnapShot =>  println("Got snap"); s.patients.foreach(p => sendToEvah(LISAMessage("new"->toNewPat(p))))
+    case r: RemovedPatient => sendToEvah(LISAMessage("removed"->r))
+  }
 
 
+  def sendToEvah(mess: LISAMessage) = {
+    evah ! mess
+  }
+
+  def toNewPat(p: ElvisPatient)= {
+    val t = p.CareContactRegistrationTime
+    NewPatient(t,p)
   }
 
 
@@ -83,7 +97,7 @@ class ElvisLogger extends PersistentActor {
           "Team" -> diffThem(prev.Team, curr.Team),
           "VisitId" -> diffThem(prev.VisitId, curr.VisitId),
           "VisitRegistrationTime" -> diffThem(prev.VisitRegistrationTime, curr.VisitRegistrationTime),
-          "timeStamp" -> Some(Extraction.decompose(getNow))
+          "timestamp" -> Some(Extraction.decompose(getNow))
         ).filter(kv=> kv._2 != None).map(kv=> kv._1 -> kv._2.get),
           curr.Events.filterNot(prev.Events.contains),
           prev.Events.filterNot(curr.Events.contains))
@@ -120,6 +134,25 @@ class ElvisLogger extends PersistentActor {
 //  }
 
 }
+
+import lisa.endpoint.esb._
+
+class ProduceToEvah(prop : LISAEndPointProperties) extends LISAEndPoint(prop) {
+  def receive = {
+    case mess: LISAMessage => {
+      topics ! mess
+    }
+  }
+}
+
+object ProduceToEvah {
+  def props(pT: List[String]) =
+    Props(classOf[ProduceToEvah], LISAEndPointProperties("produceToEvah", List(), pT))
+}
+
+
+
+
 
 
 

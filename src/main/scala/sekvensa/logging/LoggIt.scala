@@ -41,9 +41,10 @@ object LoggIt extends App {
 
   val system = ActorSystem("ELVISLogger")
   val logger = system.actorOf(ElvisLogger.props, "logger")
-  val comm = system.actorOf(ElvisComm.props(logger), "comm")
+  logger ! "hej"
+  //val comm = system.actorOf(ElvisComm.props(logger), "comm")
 
-  comm ! "GET"
+  //comm ! "GET"
 
   Console.readLine() // wait for enter to exit
   system.shutdown()
