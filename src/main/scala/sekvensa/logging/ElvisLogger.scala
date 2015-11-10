@@ -46,17 +46,24 @@ class ElvisLogger extends PersistentActor {
           diffP match {
             case None => {
               val newPatient = NewPatient(getNow, p)
-              persist(newPatient)(e => println(s"persisted a NEW: $newPatient"))
+              persist(newPatient)(e => println(s"persisted a NEW: $e"))
             }
             case Some(d) => {
               val diffPatient = PatientDiff(d._1, d._2, d._3)
-              persist(diffPatient)(e => "hej") //println(s"persisted a diff: $diffPatient"))
+              persist(diffPatient) { e =>
+                println("")
+                println(s"persisted a Diff")
+                println(s"old pat: $old")
+                println(s"new pat: $p")
+                println(s"diff: $diffPatient")
+                println("")
+              } //println(s"persisted a diff: $diffPatient"))
             }
           }
         }
         removed.map{p =>
           val removedPat = RemovedPatient(getNow, p)
-          persist(removedPat)(e => println(s"persisted a remove: $removedPat"))
+          persist(removedPat)(e => println(s"persisted a remove: $e"))
 
         }
         currentState = ps
@@ -65,11 +72,25 @@ class ElvisLogger extends PersistentActor {
     }
     case mess @ _ => println(s"ElvisLogger got: $mess")
   }
-
+  var i = 0
+  var xs = List[PatientDiff]()
   val receiveRecover: Receive = {
-    case d: PatientDiff => sendToEvah(LISAMessage("diff"->d))
+    case d: PatientDiff => {
+      sendToEvah(LISAMessage("diff"->d))
+//      xs = d :: xs
+//      if (i == 10){
+//        val j = LISAMessage("events"->xs).bodyToJson
+//        println(j)
+//      }
+//      i += 1
+    }
     case np: NewPatient => sendToEvah(LISAMessage("new"->np))
-    case s: SnapShot =>  println("Got snap"); s.patients.foreach(p => sendToEvah(LISAMessage("new"->toNewPat(p))))
+    case s: SnapShot =>  {
+      //println("Got snap")
+      //val j = LISAMessage("hej"->s).bodyToJson
+      //println(j)
+      s.patients.foreach(p => sendToEvah(LISAMessage("new"->toNewPat(p))))
+    };
     case r: RemovedPatient => sendToEvah(LISAMessage("removed"->r))
   }
 

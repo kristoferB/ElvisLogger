@@ -4,6 +4,7 @@ import akka.actor.Status.Success
 import akka.actor._
 import lisa.endpoint.esb._
 import lisa.endpoint.message._
+import org.joda.time.Minutes
 import org.json4s._
 import lisa.endpoint.message.MessageLogic._
 
@@ -47,51 +48,74 @@ class dummyProduceToEvah extends Actor {
       }
 
       def extractfromRemove(xs: List[LISAMessage]) = {
-        val removes = xs.flatMap { mess =>
-          mess.getAs[RemovedPatient]("removed").map{ r =>
-            val ev = r.patient.Events.map{e =>
-              LISAMessage(
-                  "event"-> (e.Title),
-                  "staff"-> {if (e.Title == "Läkare") Some(e.Value) else None},
-                  "duration"-> {if (e.Start <= e.End) (e.Start to e.End).millis/60000 else 0},
-                  "timestamp"->e.Start)
-            }
-            val removeEvent = LISAMessage(
-              "event"-> "removed",
-              "duration"-> 0,
-              "timestamp"->r.timestamp)
-            (r.timestamp, ev :+ removeEvent)
-          }
-        }.sortWith(_._1 > _._1)
-        if (removes.nonEmpty) removes.head._2 else List()
+        val removeMessage = (xs.flatMap(
+          _.getAs[RemovedPatient]("removed").map(r=>
+            (r.timestamp, r)))).sortWith(_._1 > _._1).map(_._2).headOption
+
+        removeMessage.map{r =>
+          val ev = r.patient.Events.map{e =>
+            (e.Start, LISAMessage(
+              "event"-> (e.Title),
+              "staff"-> {if (e.Title == "Läkare") Some(e.Value) else None},
+              "duration"-> {if (e.Start <= e.End) (e.Start to e.End).millis/60000 else 0},
+              "timestamp"->e.Start,
+              "patientID" -> r.patient.PatientId,
+              "careContactID" -> r.patient.CareContactId
+              //"lisaID"->{"evID"+e.CareEventId.toString+e.Start.toString}
+            ))
+          }.sortWith(_._1 < _._1)
+
+          val remTime = if (ev.nonEmpty && r.timestamp < ev.last._1)
+            r.timestamp.plusHours(1) else r.timestamp
+
+          val removeEvent = LISAMessage(
+            "event"-> "removed",
+            "duration"-> 0,
+            "timestamp"->remTime,
+            "patientID" -> r.patient.PatientId,
+            "careContactID" -> r.patient.CareContactId
+            //"lisaID"-> {r.patient.CareContactId + remTime.toString}
+          )
+
+          ev.map(_._2) :+ removeEvent
+        }.getOrElse(List[LISAMessage]())
+
       }
 
       def extractDiffs(xs: List[LISAMessage]) = {
         xs.flatMap{ mess =>
           mess.getAs[PatientDiff]("diff").flatMap{ diff =>
             val t = extractTimeStamp(mess)
-            val filter = diff.updates - "CareContactId" - "PatientId" - "timeStamp"
-            if (filter.isEmpty) None
+            val filter = diff.updates - "CareContactId" - "PatientId" - "timeStamp" - "timestamp"
+            val id = "evID"+diff.updates("CareContactId").toString + t.toString
+            if ((filter ).isEmpty) None
             else Some(
               LISAMessage(
                 "event"->"update",
                 "attributes" -> filter,
                 "duration" -> 0,
-                "timestamp" -> t
+                "timestamp" -> t.map(_.plusHours(1)),
+                "careContactID"-> diff.updates("CareContactId"),
+                "patientID" -> diff.updates("PatientId")
+                //"lisaID" -> id
               ))
           }
         }
       }
 
       def extractNew(xs: List[LISAMessage]) = {
-        val news = xs.flatMap { mess =>
-          mess.getAs[NewPatient]("new").map{ n =>
-            val t = n.timestamp
-            val x = n.patient.copy(Events = List())
-            (t, LISAMessage("initial"->x))
-          }
-        }.sortWith(_._1 < _._1)
-        Try(news.head._2)
+        val newMessage = (xs.flatMap(
+          _.getAs[NewPatient]("new").map(n=>
+            (n.timestamp, n)))).sortWith(_._1 > _._1).map(_._2).headOption
+
+        newMessage.map{n =>
+          val p = n.patient.copy(Events = List())
+          val t = n.patient.CareContactRegistrationTime
+          LISAMessage(
+            "initial" -> p,
+            "timestamp" -> t
+          )
+        }
       }
 
 
@@ -144,7 +168,7 @@ class dummyProduceToEvah extends Actor {
         val n = {extractNew(patMess)}
         val d = {extractDiffs(patMess)}
         val locs = {extractLocationSequence(patMess)}
-        if (e.nonEmpty && n.isSuccess) {
+        if (e.nonEmpty && n.nonEmpty) {
           val events = sort(e ++ d)
           Some(n.get + ("events" -> events.map(_.body)) + locs.body).map{p =>
             val dur = extractDurations(p).map(_.body).getOrElse(JObject())
@@ -154,210 +178,32 @@ class dummyProduceToEvah extends Actor {
       }
 
       lisa.endpoint.esb.LISAEndPoint.initial(context.system)
-      val evahPat = context.actorOf(ProduceToEvah.props(List("patients")))
-      val evahEvent = context.actorOf(ProduceToEvah.props(List("events")))
+      val evahPat = context.actorOf(ProduceToEvah.props(List("akutenpatients")))
+      val evahEvent = context.actorOf(ProduceToEvah.props(List("akutenevents")))
+      //val evahRaw = context.actorOf(ProduceToEvah.props(List("raw")))
 
       pats.foreach{ x =>
+          //x._2.foreach(evahRaw ! _)
+
           val p = foldPatient(x._1, x._2)
           p.foreach(evahPat ! _)
 
           p.foreach{ pat =>
             val ev = pat.getAs[List[JObject]]("events") getOrElse(List())
             pat.getAs[ElvisPatient]("initial").foreach{n =>
-              evahEvent ! LISAMessage("event"->"new", "timestamp"->n.CareContactRegistrationTime)
+              evahEvent ! LISAMessage(
+                "event"->"register",
+                //"lisaID" -> {"evID"+n.CareContactId.toString+pat.get("timestamp").toString},
+                "initial"->n,
+                "timestamp" -> pat.get("timestamp")
+              )
             }
             ev.foreach(evahEvent ! LISAMessage(_))
           }
       }
       println("done")
 
-      //println(kalle.head)
 
-//      println()
-//
-//      val k = Await.result(ps, scala.concurrent.duration.Duration(5.0, scala.concurrent.duration.SECONDS))
-//      println(k)
-
-      // extract a patient
-//      val p = {
-//        val (id, xs) = pats.drop(30).head
-//        val removed = sort(xs.filter(_.find("removed").nonEmpty)).last
-//        val events = removed.getAs[RemovedPatient]("removed").map { r =>
-//            r.patient.Events.map{e =>
-//              val diff = if (e.Start <= e.End)
-//                (e.Start to e.End).millis/60000 else 0
-//              (e.Start,
-//                LISAMessage(
-//                "event"-> (e.Title),
-//                "staff"-> {if (e.Title == "Läkare") Some(e.Value) else None},
-//                "duration"-> diff,
-//                "start"->e.Start)
-//                )
-//            }
-//          }
-//
-////        val diffs = sort(xs.filter(_.find("diff").nonEmpty))
-////        val news = sort(xs.filter(_.find("new").nonEmpty))
-//
-//        val d = xs.flatMap{ mess =>
-//          mess.getAs[PatientDiff]("diff").flatMap{ diff =>
-//            val t = diff.updates("timeStamp") match {case JString(s)=> new DateTime(s)}
-//            val filter = diff.updates - "CareContactId" - "PatientId" - "timeStamp"
-//            if (filter.isEmpty) None
-//            else Some((
-//              t,
-//              LISAMessage(
-//                "event"->"update",
-//                "attributes" -> filter,
-//                "duration" -> 0,
-//                "start" -> t
-//              )))
-//          }
-//        }
-//
-//        val fromNew = xs.flatMap { mess =>
-//          mess.getAs[NewPatient]("new").map{ n =>
-//            val t = n.timestamp
-//            val x = n.patient.copy(Events = List())
-//            (t, LISAMessage("new"->x))
-//          }
-//        }
-//
-//        val allEvents = events.getOrElse(List()) ++ d
-//
-//        val temp = allEvents.sortWith(_._1 < _._1)
-//
-//        (fromNew, temp)
-//      }
-//
-//      println(p)
-
-
-
-
-
-//      val temp = pats.takeRight(5)
-//      temp.foreach{
-//        case (id, xs) => {
-//          println("")
-//          println("")
-//          println("")
-//          xs.foreach{ lm =>
-//            println(lm)
-//          }
-//          println("")
-//          println("")
-//          println("")
-//        }
-//      }
-
-
-//      val locations = pats.foldLeft(List[List[String]]())((a,b) => {
-//        val locs = b._2.flatMap{
-//          mess => {
-//            mess.findAs[String]("Location")
-//          }
-//        }
-//        dropEqual(locs).reverse +: a
-//      })
-//
-//      locations.map(println)
-
-//
-//      val manyRemoved = pats.map{ p =>
-//        p._1 -> p._2.map { mess =>
-//          val d = mess.getAs[PatientDiff]("diff").map(x => "d")
-//          val np = mess.getAs[NewPatient]("new").map(x => "n")
-//          val s = mess.getAs[SnapShot]("state").map(x => "s")
-//          val r = mess.getAs[RemovedPatient]("removed").map(x => "r")
-//
-//          d.getOrElse(np.getOrElse(r.getOrElse(s.get)))
-//        }
-//      }
-//
-//      import com.github.nscala_time.time.Imports._
-//      val temp = manyRemoved.map(kv => kv._1->kv._2.groupBy(identity).mapValues(_.size))
-//      val filTemp = temp.filter(_._2.get("r").map(_>1).getOrElse(false))
-//
-//      println(s"some removed: ${filTemp}")
-
-//
-//      val analyse = pats(filTemp.head._1)
-//      val analyseSort = analyse.sortWith { (a, b) =>
-//        val ta = a.findAs[DateTime]("timestamp") ++ a.findAs[String]("timeStamp").map(new DateTime(_))
-//        val tb = b.findAs[DateTime]("timestamp") ++ b.findAs[String]("timeStamp").map(new DateTime(_))
-//        ta.head < tb.head
-//      }
-//
-//      val tomte = analyse.flatMap{ mess =>
-//        mess.findAs[DateTime]("timestamp") ++ mess.findAs[String]("timeStamp").map(new DateTime(_))
-//      }.sortWith(_ < _)
-//
-//      println(tomte)
-
-
-//      val remo = pats.foldLeft(List[List[String]]())((a,b) => {
-//        b._2.map{ mess =>
-//          val d = mess.getAs[PatientDiff]("diff").map(x => "d")
-//          val np = mess.getAs[NewPatient]("new").map(x => "n")
-//          val s = mess.getAs[SnapShot]("state").map(x => "s")
-//          val r = mess.getAs[RemovedPatient]("removed").map(x => "r")
-//
-//          d.getOrElse(np.getOrElse(r.getOrElse(s.get)))
-//
-//        } :: a
-//      })
-//
-//      println("list")
-//      remo.map(l => println(l.reverse))
-//      println("")
-
-
-//      val kalle = pats.map {
-//        case (id, xs) => {
-//          val rev = xs.reverse
-//          val k = rev.map(_.body.obj.head._1)
-//          val list = rev.flatMap(_.find("timestamp")) ++ rev.flatMap(_.find("timeStamp"))
-//
-//          k zip list
-//        }
-//      }
-//
-//      kalle.head.foreach(println)
-//      println(pats.head._2.reverse)
-
-
-
-
-
-
-//      val k = for {
-//        p <- pats
-//        mess <- p._2
-//        ev1 <- mess.findAs[List[ElvisEvent]]("Events") ++ mess.findAs[List[ElvisEvent]]("newEvents")
-//        e <- ev1
-//      } yield e
-//
-//      println(s"EventTypes: ${k.map(_.Type).groupBy(identity).mapValues(_.size)}")
-//
-//      val y = for {
-//        p <- pats
-//        mess <- p._2
-//        ev1 <- mess.findAs[List[ElvisEvent]]("removedEvents")
-//        e <- ev1
-//      } yield e
-//
-//      println(s"removed EventTypes: ${y.map(_.Type).groupBy(identity).mapValues(_.size)}")
-//
-//
-//
-//      val z = (for {
-//        p <- pats
-//        mess <- p._2
-//        ev1 <- mess.getAs[PatientDiff]("diff")
-//      } yield ev1).flatMap(_.updates.map(_._1))
-//
-//      println(s"patientUpds: ${z.groupBy(identity).mapValues(_.size)}")
 
     }
     case mess: LISAMessage => {
