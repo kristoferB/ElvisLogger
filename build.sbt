@@ -8,6 +8,7 @@ libraryDependencies ++= Seq(
   "com.typesafe.akka" %% "akka-actor" % "2.3.9",
   "com.typesafe.akka" %% "akka-testkit" % "2.3.9" % "test",
   "com.typesafe.akka" %% "akka-persistence-experimental" % "2.3.9",
+  "org.iq80.leveldb" % "leveldb" % "0.7",
   "org.scalatest" %% "scalatest" % "2.2.4" % "test")
 
 libraryDependencies ++= Seq(

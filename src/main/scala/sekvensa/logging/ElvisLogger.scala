@@ -25,6 +25,8 @@ class ElvisLogger extends PersistentActor {
   //lisa.endpoint.esb.LISAEndPoint.initial(context.system)
   val evah = context.actorOf(dummyProduceToEvah.props(List("events")))
 
+  println("Start of logger")
+
   def receiveCommand = {
     case "hej" => evah ! "hej"
     case s @ SnapShot(ps) => {
@@ -88,7 +90,7 @@ class ElvisLogger extends PersistentActor {
     case s: SnapShot =>  {
       //println("Got snap")
       //val j = LISAMessage("hej"->s).bodyToJson
-      //println(j)
+      println(s)
       s.patients.foreach(p => sendToEvah(LISAMessage("new"->toNewPat(p))))
     };
     case r: RemovedPatient => sendToEvah(LISAMessage("removed"->r))
