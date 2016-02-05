@@ -5,6 +5,7 @@ import akka.persistence._
 import lisa.endpoint.message._
 import lisa.endpoint.message.MessageLogic._
 
+
 /**
  * Created by kristofer on 18/02/15.
  */

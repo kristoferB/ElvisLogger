@@ -1,7 +1,7 @@
 package sekvensa.logging
 
 import akka.actor._
-import scala.concurrent.duration._;
+import scala.concurrent.duration._
 import scala.concurrent._
 import sekvensa.elvis._
 
