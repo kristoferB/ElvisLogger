@@ -4,7 +4,7 @@ import akka.actor.ActorSystem
 import org.json4s.JValue
 import scala.concurrent._
 
-import sekvensa.elvis._
+//import sekvensa.elvis._
 import com.github.nscala_time.time.Imports._
 //import scala.concurrent.duration._
 
@@ -19,6 +19,11 @@ case class ElvisPatient(CareContactId: Int,
                         Team: String,
                         VisitId: Int,
                         VisitRegistrationTime: DateTime)
+
+
+
+
+
 
 
 
@@ -46,7 +51,7 @@ object LoggIt extends App {
   //comm ! "GET"
 
   Console.readLine() // wait for enter to exit
-  system.shutdown()
+  system.terminate()
 
 //  case class Foo(i : Int, s : String, list: List[String])
 //
