@@ -2,8 +2,14 @@ package sekvensa.logging
 
 import akka.actor._
 import akka.persistence._
-import lisa.endpoint.message._
-import lisa.endpoint.message.MessageLogic._
+import com.codemettle.reactivemq.ReActiveMQMessages.GetAuthenticatedConnection
+import org.json4s._
+import org.json4s.JsonAST.JValue
+import com.codemettle.reactivemq._
+import com.codemettle.reactivemq.ReActiveMQMessages._
+import com.codemettle.reactivemq.model._
+
+
 
 /**
  * Created by kristofer on 18/02/15.
@@ -12,8 +18,17 @@ class ElvisLogger extends PersistentActor {
   override def persistenceId = "ELVIS"
 
   //override def preStart() = ()
+  // Add correct user and password here, TODO: move to configuration
+  ReActiveMQExtension(context.system).manager ! GetAuthenticatedConnection("nio://localhost:61616", "user", "pass")
+
+  import org.json4s.native.Serialization
+  import org.json4s.native.Serialization.{read, write}
+
+
 
   var currentState: List[ElvisPatient] = List()
+  var playBack: List[String] = List()
+  var theBus: Option[ActorRef] = None;
 
   import org.json4s._
   import org.json4s.native.JsonMethods._
@@ -22,21 +37,35 @@ class ElvisLogger extends PersistentActor {
   import com.github.nscala_time.time.Imports._
   implicit val formats = org.json4s.DefaultFormats ++ org.json4s.ext.JodaTimeSerializers.all
 
-  //lisa.endpoint.esb.LISAEndPoint.initial(context.system)
-  val evah = context.actorOf(dummyProduceToEvah.props(List("events")))
 
   println("Start of logger")
 
   def receiveCommand = {
-    case "hej" => evah ! "hej"
+    case ConnectionEstablished(request, c) => {
+      println("connected:"+request)
+      theBus = Some(c)
+
+      //playBack.reverse.foreach(json => sendToEvah(json))
+
+      val testSnap = SnapShot(List(ElvisPatient(1, DateTime.now, "hej", List(), "g", 1, "", "", 1, DateTime.now)))
+      self ! testSnap
+    }
+    case ConnectionFailed(request, reason) => {
+      println("failed:"+reason)
+    }
+    case mess @ AMQMessage(body, prop, headers) => {
+      println(mess)
+    }
     case s @ SnapShot(ps) => {
+      val json = write(Map("patients"->ps))
+      sendToEvah(json, "elvisSnapShot")
+
       if (currentState.isEmpty) {
         ps.foreach(p => println(s"${p.CareContactId}, ${p.Location}"))
         persist(s)(event => println("persisted a snapshot"))
         currentState = ps
       }
-      else if (currentState == ps) "hej" //println("NO CHANGE")
-      else {
+      else if (currentState != ps)  {
         val changes = ps.filterNot(currentState.contains)
         val removed = currentState.filterNot(p => ps.exists(_.CareContactId == p.CareContactId))
         changes.map{p =>
@@ -78,27 +107,35 @@ class ElvisLogger extends PersistentActor {
   var xs = List[PatientDiff]()
   val receiveRecover: Receive = {
     case d: PatientDiff => {
-      sendToEvah(LISAMessage("diff"->d))
-//      xs = d :: xs
+      val json = write(Map("diff"->d))
+      playBack = json :: playBack
+      //      xs = d :: xs
 //      if (i == 10){
-//        val j = LISAMessage("events"->xs).bodyToJson
+//        val j = SPAttributes("events"->xs).bodyToJson
 //        println(j)
 //      }
 //      i += 1
     }
-    case np: NewPatient => sendToEvah(LISAMessage("new"->np))
+    case np: NewPatient =>
+      val json = write(Map("new"->np))
+      playBack = json :: playBack
     case s: SnapShot =>  {
       //println("Got snap")
-      //val j = LISAMessage("hej"->s).bodyToJson
+      //val j = SPAttributes("hej"->s).bodyToJson
       println(s)
-      s.patients.foreach(p => sendToEvah(LISAMessage("new"->toNewPat(p))))
+      s.patients.foreach(p => {
+        val json = write(Map("new"->toNewPat(p)))
+        playBack = json :: playBack
+      })
     };
-    case r: RemovedPatient => sendToEvah(LISAMessage("removed"->r))
+    case r: RemovedPatient =>
+      val json = write(Map("removed"->r))
+      playBack = json :: playBack
   }
 
 
-  def sendToEvah(mess: LISAMessage) = {
-    evah ! mess
+  def sendToEvah(json: String, topic: String = "elvisPlayBack") = {
+    theBus.foreach{bus => bus ! SendMessage(Topic(topic), AMQMessage(json))}
   }
 
   def toNewPat(p: ElvisPatient)= {
@@ -137,87 +174,68 @@ class ElvisLogger extends PersistentActor {
   def getNow = {
     DateTime.now(DateTimeZone.forID("Europe/Stockholm"))
   }
-//
-//
-//  def diff(orig: Product, update: Product): Map[Int, Any] = {
-//    assert(orig != null && update != null, "Both products must be non-null")
-//    assert(orig.getClass == update.getClass, "Both products must be of the same class")
-//
-//    val diffs = for (ix <- 0 until orig.productArity) yield {
-//      (orig.productElement(ix), update.productElement(ix)) match {
-//        case (s1: String, s2: String) if (!s1.equalsIgnoreCase(s2)) => Some((ix -> s2))
-//        case (s1: String, s2: String) => None
-//        case (p1: Product, p2: Product) if (p1 != p2) => Some((ix -> diff(p1, p2)))
-//        case (x, y) if (x != y) => Some((ix -> y))
-//        case _ => None
-//      }
-//    }
-//
-//    diffs.flatten.toMap
-//  }
 
-}
 
-import lisa.endpoint.esb._
 
-class ProduceToEvah(prop : LISAEndPointProperties) extends LISAEndPoint(prop) {
-  def receive = {
-    case mess: LISAMessage => {
-      topics ! mess
+  // copy from SP
+  type SPAttributes = JObject
+  //val SPAttributes = JObject
+  type SPValue = JValue
+  //val SPValue = JValue
+
+  object SPAttributes {
+    def apply[T](pair: (String, T)*)(implicit formats : org.json4s.Formats, mf : scala.reflect.Manifest[T]): SPAttributes = {
+      val res = pair.map{
+        case (key, value) => key -> SPValue(value)
+      }
+      JObject(res.toList)
     }
-  }
-}
-
-object ProduceToEvah {
-  def props(pT: List[String]) =
-    Props(classOf[ProduceToEvah], LISAEndPointProperties("produceToEvah", List(), pT))
-}
-
-
-
-
-
-
-
-
-
-
-import shapeless._
-class TESTAR extends App {
-  case class Foo(i : Int, s : String, list: List[String])
-
-  val f1 = Foo(1, "hej", List("hej"))
-  val f2 = Foo(2, "hej", List("hej"))
-
-
-
-
-
-
-  def diff(orig: Product, update: Product): Map[Int, Any] = {
-    assert(orig != null && update != null, "Both products must be non-null")
-    assert(orig.getClass == update.getClass, "Both products must be of the same class")
-
-    val diffs = for (ix <- 0 until orig.productArity) yield {
-      (orig.productElement(ix), update.productElement(ix)) match {
-        case (s1: String, s2: String) if (!s1.equalsIgnoreCase(s2)) => Some((ix -> s2))
-        case (s1: String, s2: String) => None
-        case (p1: Product, p2: Product) if (p1 != p2) => Some((ix -> diff(p1, p2)))
-        case (x, y) if (x != y) => Some((ix -> y))
-        case _ => None
+    def apply() = JObject()
+    def apply(fs: List[JField]): JObject = JObject(fs.toList)
+    def fromJson(json: String) = {
+      try {
+        org.json4s.native.JsonMethods.parse(json) match {
+          case x: SPAttributes => Some(x)
+          case x: JValue => None
+        }
+      } catch {
+        case e: Exception => None
       }
     }
-
-    diffs.flatten.toMap
   }
 
-  println("DIFF: "+diff(f1,f2))
+  object SPValue {
+    def apply[T](v: T)(implicit formats : org.json4s.Formats, mf : scala.reflect.Manifest[T]): SPValue = {
+      Extraction.decompose(v)
+    }
+    def apply(s: String) = JString(s)
+    def apply(i: Int) = JInt(i)
+    def apply(b: Boolean) = JBool(b)
+    def fromJson(json: String): Option[SPValue] = {
+      try {
+        Some(org.json4s.native.JsonMethods.parse(json))
+      } catch {
+        case e: Exception => None
+      }
+    }
+  }
+
+
 
 }
+
+
 
 object ElvisLogger {
   def props = Props[ElvisLogger]
 
 
+
+
 }
+
+
+
+
+
 
