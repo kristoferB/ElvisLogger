@@ -22,24 +22,6 @@ class ElvisComm(sendTo: ActorRef) extends Actor with ActorLogging {
       val patients = getPatients(fresponse)
       patients map (l => sendTo ! SnapShot(l))
 
-      service.fetchDepartmentList(Some(Some(ArrayOfstring(Some(""))))).map{ a =>
-        a.FetchDepartmentListResult.get.get.DepartmentList.get.get.DepartmentListItem.toList.map{d=>
-          println(d.get.DepartmentComment.get.get)
-        }
-      }
-
-      for {
-        a <- service.fetchDepartmentList(Some(Some(ArrayOfstring(Some("")))))
-        b <- a.FetchDepartmentListResult.get
-        c <- b.DepartmentList.get
-        d <- c.DepartmentListItem
-        e <- d
-        f <- e.DepartmentComment.get
-        g <- e.Location.get
-      } yield {
-        println(s"pat: $g - $f")
-      }
-
       patients.onFailure{
         case t => println(s"Error in comm: ${t.getMessage}")
       }
