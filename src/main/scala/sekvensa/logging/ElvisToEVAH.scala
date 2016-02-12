@@ -14,7 +14,7 @@ object ElvisToEVAH extends App {
   val a2 = system.actorOf(Props[AnActor2])
 
   a ! "connect"
-  a2 ! "connect"
+  //a2 ! "connect"
 
 
 
@@ -25,7 +25,7 @@ class AnActor extends Actor {
   def receive = {
     case "connect" => {
       //ReActiveMQExtension(context.system).manager ! GetConnection("nio://localhost:61616", Some("myName"))
-      ReActiveMQExtension(context.system).manager ! GetAuthenticatedConnection("nio://localhost:61616", "user", "pass")
+      ReActiveMQExtension(context.system).manager ! GetAuthenticatedConnection("nio://129.16.80.45:61616", "elvis", "elvis")
     }
     case ConnectionEstablished(request, c) => {
       println("connected:"+request)
@@ -35,7 +35,7 @@ class AnActor extends Actor {
       println("failed:"+reason)
     }
     case mess @ AMQMessage(body, prop, headers) => {
-      println(mess)
+      println("SNAP:" +body)
     }
   }
 }
