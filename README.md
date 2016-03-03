@@ -1,6 +1,7 @@
 Elvis logger
 =========================
 
-Här borde finnas en del info.
+Reads from external source and local files.
+prints to ActiveMQ
 
 
