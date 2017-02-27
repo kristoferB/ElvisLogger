@@ -19,7 +19,7 @@ class ElvisLogger extends PersistentActor {
 
   //override def preStart() = ()
   // Add correct user and password here, TODO: move to configuration
-  ReActiveMQExtension(context.system).manager ! GetAuthenticatedConnection("nio://localhost:61616", "user", "pass")
+  //ReActiveMQExtension(context.system).manager ! GetAuthenticatedConnection("nio://localhost:61616", "user", "pass")
 
   import org.json4s.native.Serialization
   import org.json4s.native.Serialization.{read, write}
@@ -45,7 +45,7 @@ class ElvisLogger extends PersistentActor {
       println("connected:"+request)
       theBus = Some(c)
 
-      //playBack.reverse.foreach(json => sendToEvah(json))
+
 
       val testSnap = SnapShot(List(ElvisPatient(1, DateTime.now, "hej", List(), "g", 1, "", "", 1, DateTime.now)))
       self ! testSnap
@@ -106,6 +106,13 @@ class ElvisLogger extends PersistentActor {
   var i = 0
   var xs = List[PatientDiff]()
   val receiveRecover: Receive = {
+    case RecoveryCompleted => 
+            println("******** START ************")
+      //playBack.reverse.foreach(json => sendToEvah(json))
+      //*******************
+      playBack.reverse.foreach(println)
+      println("******** STOP ************")
+
     case d: PatientDiff => {
       val json = write(Map("diff"->d))
       playBack = json :: playBack
