@@ -110,8 +110,11 @@ class ElvisLogger extends PersistentActor {
             println("******** START ************")
       //playBack.reverse.foreach(json => sendToEvah(json))
       //*******************
-      playBack.reverse.foreach(println)
+      println("[")
+      playBack.reverse.foreach(x => println(x + ","))
+      println("]")
       println("******** STOP ************")
+
 
     case d: PatientDiff => {
       val json = write(Map("diff"->d))
@@ -129,7 +132,7 @@ class ElvisLogger extends PersistentActor {
     case s: SnapShot =>  {
       //println("Got snap")
       //val j = SPAttributes("hej"->s).bodyToJson
-      println(s)
+      //println(s)
       s.patients.foreach(p => {
         val json = write(Map("new"->toNewPat(p)))
         playBack = json :: playBack
